@@ -1,0 +1,226 @@
+//@version=4
+
+//MIT License
+
+//Copyright (c) 2019 user-Noldo
+
+//Permission is hereby granted, free of charge, to any person obtaining a copy
+//of this software and associated documentation files (the "Software"), to deal
+//in the Software without restriction, including without limitation the rights
+//to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+//copies of the Software, and to permit persons to whom the Software is
+//furnished to do so, subject to the following conditions:
+
+//The above copyright notice and this permission notice shall be included in all
+//copies or substantial portions of the Software.
+
+//THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+//IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+//FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+//AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+//LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+//OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+//SOFTWARE.
+
+
+study("Dow Factor Stoch RSI")
+src = close
+reverse = false
+
+lengthRSI   = input(14,title = "RSI Length")
+lengthStoch = input(14,title = "Stoch Length")
+
+smoothK = input(3, title = "SmoothK Length" )     
+smoothD = input(3, title = "SmoothD Length" )   
+
+OverSold   = input(25 , minval = 1 , title = "SRSI Buy")
+OverBought = input(75 , minval = 1 , title = "SRSI Sell")
+
+
+//Essential Functions 
+
+// Function Exponential Moving Average 
+
+f_sum(_src , _length) => 
+
+    _output  = 0.00 
+    
+    _length_adjusted = _length < 1 ? 1 : _length
+    
+    for i = 0 to _length_adjusted-1
+        _output := _output + _src[i]
+
+
+f_sma(_src, _length)=>
+    _length_adjusted = _length < 1 ? 1 : _length
+    float _sum = 0
+    for _i = 0 to (_length_adjusted - 1)
+        _sum := _sum + _src[_i]
+    _return = _sum / _length_adjusted
+   
+
+// Unlocked Exponential Moving Average Function
+
+f_ema(_src, _length)=>
+    _length_adjusted = _length < 1 ? 1 : _length
+    _multiplier = 2 / (_length_adjusted + 1)
+    _return  = 0.00
+    _return := na(_return[1]) ? _src : ((_src - _return[1]) * _multiplier) + _return[1]
+
+
+// Function Standard Deviation
+
+f_stdev(_src,_length) =>
+
+    float _output = na 
+    _length_adjusted = _length < 2 ? 2 : _length
+    _avg  = f_ema(_src , _length_adjusted)
+    evar  = (_src - _avg) * (_src - _avg)
+    evar2 = ((f_sum(evar,_length_adjusted))/_length_adjusted)
+    
+    _output := sqrt(evar2)
+
+
+// Linear Regression Channels : 
+
+f_pearson_corr(_src1, _src2, _length) =>
+
+    _length_adjusted = _length < 2 ? 2 : _length
+    _ema1 = f_ema(_src1, _length_adjusted)
+    _ema2 = f_ema(_src2, _length_adjusted)
+    isum = 0.0
+    for i = 0 to _length_adjusted - 1
+        isum := isum + (_src1[i] - _ema1) * (_src2[i] - _ema2)
+    isumsq1 = 0.0
+    for i = 0 to _length_adjusted - 1
+        isumsq1 := isumsq1 + pow(_src1[i] - _ema1, 2)
+    isumsq2 = 0.0
+    for i = 0 to _length_adjusted - 1
+        isumsq2 := isumsq2 + pow(_src2[i] - _ema2, 2)
+    pcc = isum/(sqrt(isumsq1*isumsq2))
+    pcc
+
+// FUNCTION HIGHEST AND LOWEST  ( All Efforts goes to RicardoSantos )
+
+f_highest(_src, _length)=>
+    _adjusted_length = _length < 1 ? 1 : _length
+    _value = _src
+    for _i = 0 to (_adjusted_length-1)
+        _value := _src[_i] >= _value ? _src[_i] : _value
+    _return = _value
+
+f_lowest(_src, _length)=>
+    _adjusted_length = _length < 1 ? 1 : _length
+    _value = _src
+    for _i = 0 to (_adjusted_length-1)
+        _value := _src[_i] <= _value ? _src[_i] : _value
+    _return = _value
+
+
+//  Relative Strength Index (RSI)
+
+// Function RMA 
+
+
+f_rma(_src, _length) =>
+    _length_adjusted = _length < 1 ? 1 : _length
+    alpha = _length_adjusted
+    sum = 0.0
+    sum := (_src + (alpha - 1) * nz(sum[1])) / alpha
+
+
+// Function Relative Strength Index (RSI)
+
+f_rsi(_src, _length) => 
+
+    _output = 0.00 
+    _length_adjusted = _length < 0 ? 0 : _length
+
+    u = _length_adjusted < 1 ? max(_src - _src[_length_adjusted], 0) : max(_src - _src[1] , 0) // upward change
+    d = _length_adjusted < 1 ? max(_src[_length_adjusted] - _src, 0) : max(_src[1] - _src , 0) // downward change
+    rs = f_rma(u, _length) / f_rma(d, _length)
+    res = 100 - 100 / (1 + rs)
+    res
+
+
+_rsi = f_rsi(src, lengthRSI)
+
+// Dow Factor RSI 
+
+// Dow Theory Cycles 
+
+dow_coeff = f_pearson_corr(src,volume,lengthRSI)
+
+dow_bull_factor = (1 + dow_coeff)
+dow_bear_factor = (1 - dow_coeff)
+
+// Conditions  
+
+_bull_gross  = (_rsi )
+_bear_gross  = (100 - _rsi )
+
+_price_stagnant = ((_bull_gross * _bear_gross ) / 100)
+_price_bull     =  (_bull_gross - _price_stagnant) 
+_price_bear     =  (_bear_gross - _price_stagnant) 
+
+
+_coeff_price = (_price_stagnant + _price_bull + _price_bear) / 100 
+
+_bull     = _price_bull / _coeff_price 
+_bear     = _price_bear / _coeff_price 
+_stagnant = _price_stagnant / _coeff_price
+
+
+
+// Market Types with Dow Factor
+
+_temp_bull_gross     =  _bull     * dow_bull_factor       
+
+_temp_bear_gross     =  _bear     * dow_bear_factor 
+
+
+// Addition : Odds with Stagnant Market 
+
+
+_coeff_normal = (_temp_bull_gross + _temp_bear_gross) / 100
+
+// ********* OUR RSI VALUE ***********
+
+_rsi_dow_adjusted  = _temp_bull_gross / _coeff_normal
+
+
+// Function Stochastic RSI
+
+
+f_stoch(_src , _length) => 
+
+    100 * (_src - f_lowest(f_lowest(_src ,1), _length)) / (f_highest(f_highest(_src , 1), _length) - f_lowest(f_lowest(_src ,1), _length))
+
+
+// Definition : Variables K3 and D
+
+k3 = f_ema(f_stoch(_rsi_dow_adjusted, lengthStoch), smoothK)
+d  = f_ema(k3, smoothD)
+
+// Plot data
+
+h1 = hline(OverSold,  color=#C0C0C0 , title = "Oversold Level")
+h2 = hline(OverBought,color=#C0C0C0 , title = "Overbought Level")
+plot(k3, color=#007FFF    , title="K-line" , linewidth = 1,transp = 0)
+plot(d,  color=#FFAE42    , title="D-line" , linewidth = 1,transp = 0)
+fill(h1, h2, color=#66023C , transp=90, title="Border")
+
+// Barcolor (All efforts goes to Hpotter)
+
+pos =	iff(k3 > d , 1,-1) 
+possig = iff(reverse and pos == 1, -1,
+          iff(reverse and pos == -1, 1, pos))
+ 
+
+barcolor(possig == -1 ? color.red: possig == 1 ? color.green : na )
+
+// Alerts 
+
+alertcondition(possig ==1 , title='Buy Signal', message='Buy Signal ')
+alertcondition(possig ==-1, title='Sell Signal', message='Sell Signal ')
+
