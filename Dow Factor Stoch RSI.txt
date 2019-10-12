@@ -23,19 +23,47 @@
 //SOFTWARE.
 
 
-study("Dow Factor Stoch RSI")
+study("Dow Factor Stoch RSI v2.0")
 src = close
+adaptive = input(title="Market Type ", options=["MARKETS EXCLUDING USD/X", "FX USD/X",  "CRYPTOCURRENCIES"], defval="MARKETS EXCLUDING USD/X")
+lights          = input(title="Barcolor I / 0 ? ", options=["ON", "OFF"], defval="OFF")
 reverse = false
 
 lengthRSI   = input(14,title = "RSI Length")
 lengthStoch = input(14,title = "Stoch Length")
 
-smoothK = input(3, title = "SmoothK Length" )     
-smoothD = input(3, title = "SmoothD Length" )   
+smoothK = lengthRSI   / 4.667    
+smoothD = lengthStoch / 4.667
 
 OverSold   = input(25 , minval = 1 , title = "SRSI Buy")
 OverBought = input(75 , minval = 1 , title = "SRSI Sell")
 
+// DEFINITION : INDEXES 
+
+// For Global Markets
+
+index = security('SP:SPX' , timeframe.period, close)
+
+// For Cryptocurrency
+
+crypto_index = security('CRYPTOINDEX:CIX100' , timeframe.period, close)
+
+// Switchable Index Selector : 
+
+_index = 0.00 
+
+
+if (adaptive=="MARKETS EXCLUDING USD/X")
+
+    _index:= index
+    
+if (adaptive=="FX USD/X")
+
+    _index:= -1 * index 
+    
+if (adaptive=="CRYPTOCURRENCIES")
+
+    _index:= crypto_index
 
 //Essential Functions 
 
@@ -81,13 +109,11 @@ f_stdev(_src,_length) =>
     _output := sqrt(evar2)
 
 
-// Linear Regression Channels : 
-
 f_pearson_corr(_src1, _src2, _length) =>
 
     _length_adjusted = _length < 2 ? 2 : _length
-    _ema1 = f_ema(_src1, _length_adjusted)
-    _ema2 = f_ema(_src2, _length_adjusted)
+    _ema1 = f_sma(_src1, _length_adjusted)
+    _ema2 = f_sma(_src2, _length_adjusted)
     isum = 0.0
     for i = 0 to _length_adjusted - 1
         isum := isum + (_src1[i] - _ema1) * (_src2[i] - _ema2)
@@ -99,6 +125,21 @@ f_pearson_corr(_src1, _src2, _length) =>
         isumsq2 := isumsq2 + pow(_src2[i] - _ema2, 2)
     pcc = isum/(sqrt(isumsq1*isumsq2))
     pcc
+
+
+// Function Multiple Index Pearson Correlation (3 - way)
+// dep = dependent (z) ,  indep = independent variables (x , y)
+
+f_multiple_corr(_dep1,_indep1,_indep2 , _length) =>
+    _length_adjusted = _length < 2 ? 2 : _length 
+    float _output = na 
+    
+    r_xz = f_pearson_corr(_indep1 , _dep1   , _length_adjusted)
+    r_yz = f_pearson_corr(_indep2 , _dep1   , _length_adjusted)
+    r_xy = f_pearson_corr(_indep1 , _indep2 , _length_adjusted)
+    
+    _output := sqrt((pow(r_xz , 2) + pow(r_yz , 2) - 2 * r_xz * r_yz * r_xy) / (1 - pow(r_xy , 2)))
+    
 
 // FUNCTION HIGHEST AND LOWEST  ( All Efforts goes to RicardoSantos )
 
@@ -147,9 +188,17 @@ _rsi = f_rsi(src, lengthRSI)
 
 // Dow Factor RSI 
 
-// Dow Theory Cycles 
 
-dow_coeff = f_pearson_corr(src,volume,lengthRSI)
+f_adjusted_r_squared(_dep1,_indep1,_indep2,_length) =>
+    _length_adjusted = _length < 2 ? 2 : _length 
+    float _output = na
+    
+    r_squared = f_multiple_corr(_dep1,_indep1,_indep2,_length_adjusted)
+    _output := 1 - (((1 - pow(r_squared,2)) * (_length_adjusted - 1)) / (_length_adjusted - 3))
+
+
+
+dow_coeff = f_adjusted_r_squared(src,volume,_index,lengthRSI)
 
 dow_bull_factor = (1 + dow_coeff)
 dow_bear_factor = (1 - dow_coeff)
@@ -159,24 +208,12 @@ dow_bear_factor = (1 - dow_coeff)
 _bull_gross  = (_rsi )
 _bear_gross  = (100 - _rsi )
 
-_price_stagnant = ((_bull_gross * _bear_gross ) / 100)
-_price_bull     =  (_bull_gross - _price_stagnant) 
-_price_bear     =  (_bear_gross - _price_stagnant) 
-
-
-_coeff_price = (_price_stagnant + _price_bull + _price_bear) / 100 
-
-_bull     = _price_bull / _coeff_price 
-_bear     = _price_bear / _coeff_price 
-_stagnant = _price_stagnant / _coeff_price
-
-
 
 // Market Types with Dow Factor
 
-_temp_bull_gross     =  _bull     * dow_bull_factor       
+_temp_bull_gross     =  _bull_gross * (1 + dow_bull_factor)       
 
-_temp_bear_gross     =  _bear     * dow_bear_factor 
+_temp_bear_gross     =  _bear_gross * (1 + dow_bear_factor) 
 
 
 // Addition : Odds with Stagnant Market 
@@ -217,7 +254,22 @@ possig = iff(reverse and pos == 1, -1,
           iff(reverse and pos == -1, 1, pos))
  
 
-barcolor(possig == -1 ? color.red: possig == 1 ? color.green : na )
+_lights = 0.00 
+
+
+if (lights=="ON")
+
+    _lights:= 1.00
+    
+if (lights=="OFF")
+
+    _lights:= -1.00   
+
+
+bcolor_on  = _lights ==  1.00
+bcolor_off = _lights == -1.00
+
+barcolor(possig == -1 and bcolor_on ? color.red: possig == 1 and bcolor_on ? color.green : na )
 
 // Alerts 
 
